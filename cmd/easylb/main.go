@@ -15,12 +15,13 @@ import (
 func main() {
 	listenAddr := flag.String("listen", ":80", "Address to listen on")
 	agentAddr := flag.String("agent", "http://127.0.0.1:8080", "Local easyrun agent address")
+	tagFilter := flag.String("tag", "", "Only route jobs with this tag (e.g., lb:easyflor)")
 	flag.Parse()
 
-	log.Printf("Starting easylb on %s, agent=%s", *listenAddr, *agentAddr)
+	log.Printf("Starting easylb on %s, agent=%s, tag=%q", *listenAddr, *agentAddr, *tagFilter)
 
 	routeTable := lb.NewRouteTable()
-	watcher := lb.NewWatcher(*agentAddr, routeTable)
+	watcher := lb.NewWatcher(*agentAddr, routeTable, *tagFilter)
 	proxy := lb.NewProxy(routeTable)
 
 	ctx, cancel := context.WithCancel(context.Background())

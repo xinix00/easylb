@@ -38,15 +38,17 @@ type Watcher struct {
 	routeTable *RouteTable
 	client     *http.Client
 	interval   time.Duration
+	tagFilter  string // e.g., "lb:easyflor" means only jobs with tag lb=easyflor
 }
 
 // NewWatcher creates a new watcher
-func NewWatcher(agentAddr string, routeTable *RouteTable) *Watcher {
+func NewWatcher(agentAddr string, routeTable *RouteTable, tagFilter string) *Watcher {
 	return &Watcher{
 		agentAddr:  agentAddr,
 		routeTable: routeTable,
 		client:     &http.Client{Timeout: 10 * time.Second},
 		interval:   5 * time.Second,
+		tagFilter:  tagFilter,
 	}
 }
 
@@ -116,6 +118,10 @@ func (w *Watcher) sync() {
 
 			job := jobByID[task.JobID]
 			if job == nil {
+				continue
+			}
+
+			if !w.jobMatchesFilter(job) {
 				continue
 			}
 
@@ -220,4 +226,23 @@ func extractHost(endpoint string) string {
 		return ""
 	}
 	return u.Hostname()
+}
+
+// parseTagFilter parses "key:value" into key and value
+func parseTagFilter(filter string) (string, string) {
+	for i, c := range filter {
+		if c == ':' {
+			return filter[:i], filter[i+1:]
+		}
+	}
+	return filter, ""
+}
+
+// jobMatchesFilter checks if job has the required tag
+func (w *Watcher) jobMatchesFilter(job *Job) bool {
+	if w.tagFilter == "" {
+		return true // no filter = match all
+	}
+	key, value := parseTagFilter(w.tagFilter)
+	return job.Tags[key] == value
 }
