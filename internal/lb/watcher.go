@@ -167,7 +167,7 @@ func (w *Watcher) sync() {
 }
 
 func (w *Watcher) fetchAgents() ([]*Agent, error) {
-	resp, err := w.client.Get(w.agentAddr + "/agents")
+	resp, err := w.client.Get(w.agentAddr + "/v1/agents")
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func (w *Watcher) fetchAgents() ([]*Agent, error) {
 }
 
 func (w *Watcher) fetchJobs() ([]*Job, error) {
-	resp, err := w.client.Get(w.agentAddr + "/jobs")
+	resp, err := w.client.Get(w.agentAddr + "/v1/jobs")
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func (w *Watcher) fetchJobs() ([]*Job, error) {
 }
 
 func (w *Watcher) fetchClusterStatus() (map[string][]*Task, error) {
-	resp, err := w.client.Get(w.agentAddr + "/status")
+	resp, err := w.client.Get(w.agentAddr + "/v1/status")
 	if err != nil {
 		return nil, err
 	}
@@ -213,11 +213,13 @@ func (w *Watcher) fetchClusterStatus() (map[string][]*Task, error) {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	var status map[string][]*Task
+	var status struct {
+		TasksByAgent map[string][]*Task `json:"tasks_by_agent"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		return nil, err
 	}
-	return status, nil
+	return status.TasksByAgent, nil
 }
 
 func extractHost(endpoint string) string {
