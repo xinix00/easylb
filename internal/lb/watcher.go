@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -23,6 +24,12 @@ type Job struct {
 	ID   string            `json:"id"`
 	Name string            `json:"name"`
 	Tags map[string]string `json:"tags"`
+}
+
+// Agent represents an easyrun agent
+type Agent struct {
+	ID       string `json:"id"`
+	Endpoint string `json:"endpoint"`
 }
 
 // Watcher watches easyrun for task changes and updates the route table
@@ -62,6 +69,13 @@ func (w *Watcher) Run(ctx context.Context) {
 }
 
 func (w *Watcher) sync() {
+	// Fetch agents (for endpoints)
+	agents, err := w.fetchAgents()
+	if err != nil {
+		log.Printf("Failed to fetch agents: %v", err)
+		return
+	}
+
 	// Fetch jobs (for tags)
 	jobs, err := w.fetchJobs()
 	if err != nil {
@@ -76,7 +90,12 @@ func (w *Watcher) sync() {
 		return
 	}
 
-	// Build job lookup
+	// Build lookups
+	agentByID := make(map[string]*Agent)
+	for _, agent := range agents {
+		agentByID[agent.ID] = agent
+	}
+
 	jobByID := make(map[string]*Job)
 	for _, job := range jobs {
 		jobByID[job.ID] = job
@@ -85,7 +104,18 @@ func (w *Watcher) sync() {
 	// Build routes from running tasks with urlprefix tags
 	routes := make(map[string]*Route)
 
-	for _, tasks := range status {
+	for agentID, tasks := range status {
+		agent := agentByID[agentID]
+		if agent == nil {
+			continue
+		}
+
+		// Extract host from agent endpoint (e.g., "http://192.168.1.10:8080" -> "192.168.1.10")
+		agentHost := extractHost(agent.Endpoint)
+		if agentHost == "" {
+			continue
+		}
+
 		for _, task := range tasks {
 			// Only route to running tasks
 			if task.State != "running" {
@@ -119,10 +149,10 @@ func (w *Watcher) sync() {
 					continue
 				}
 
-				// Add backend to route
+				// Add backend to route using agent's IP
 				backend := &Backend{
-					Address: fmt.Sprintf("127.0.0.1:%d", port),
-					Healthy: true, // TODO: check health
+					Address: fmt.Sprintf("%s:%d", agentHost, port),
+					Healthy: true,
 				}
 
 				if route, ok := routes[pattern]; ok {
@@ -139,6 +169,24 @@ func (w *Watcher) sync() {
 
 	w.routeTable.Update(routes)
 	log.Printf("Updated routes: %d patterns", len(routes))
+}
+
+func (w *Watcher) fetchAgents() ([]*Agent, error) {
+	resp, err := w.client.Get(w.leaderAddr + "/agents")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	var agents []*Agent
+	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
+		return nil, err
+	}
+	return agents, nil
 }
 
 func (w *Watcher) fetchJobs() ([]*Job, error) {
@@ -175,4 +223,13 @@ func (w *Watcher) fetchClusterStatus() (map[string][]*Task, error) {
 		return nil, err
 	}
 	return status, nil
+}
+
+// extractHost extracts the hostname/IP from a URL (e.g., "http://192.168.1.10:8080" -> "192.168.1.10")
+func extractHost(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
