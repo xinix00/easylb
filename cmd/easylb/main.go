@@ -14,28 +14,25 @@ import (
 
 func main() {
 	listenAddr := flag.String("listen", ":80", "Address to listen on")
-	leaderAddr := flag.String("leader", "http://127.0.0.1:8080", "Easyrun leader address")
+	agentAddr := flag.String("agent", "http://127.0.0.1:8080", "Local easyrun agent address")
 	flag.Parse()
 
-	log.Printf("Starting easylb on %s, watching %s", *listenAddr, *leaderAddr)
+	log.Printf("Starting easylb on %s, agent=%s", *listenAddr, *agentAddr)
 
 	routeTable := lb.NewRouteTable()
-	watcher := lb.NewWatcher(*leaderAddr, routeTable)
+	watcher := lb.NewWatcher(*agentAddr, routeTable)
 	proxy := lb.NewProxy(routeTable)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start watching for route updates
 	go watcher.Run(ctx)
 
-	// Start HTTP server
 	server := &http.Server{
 		Addr:    *listenAddr,
 		Handler: proxy,
 	}
 
-	// Graceful shutdown
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

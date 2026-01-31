@@ -12,8 +12,10 @@ Simple hostname-based load balancer for easyrun.
 ## Usage
 
 ```bash
-./easylb -listen :80 -leader http://127.0.0.1:8080
+./easylb -listen :80 -agent http://127.0.0.1:8080
 ```
+
+Runs on each node, queries the local easyrun agent.
 
 ## Tags
 
@@ -28,7 +30,8 @@ tags:
 
 ## How it works
 
-1. Polls easyrun leader every 5 seconds for task updates
-2. Builds route table from jobs with `urlprefix:` tags
-3. Only includes tasks in `running` state
-4. Round-robins requests across healthy backends
+1. Queries local easyrun agent every 5 seconds
+2. Fetches all agents, jobs, and tasks from cluster
+3. Builds route table from jobs with `urlprefix:` tags
+4. Only includes tasks in `running` state
+5. Round-robins requests across backends
