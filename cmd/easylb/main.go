@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,40 +11,79 @@ import (
 	"syscall"
 
 	"easylb/internal/lb"
+	"easylb/internal/metrics"
 )
 
 func main() {
-	listenAddr := flag.String("listen", ":80", "Address to listen on")
+	listenAddr := flag.String("listen", ":80", "Address to listen on for HTTP traffic")
+	adminAddr := flag.String("admin-listen", ":9091", "Address to listen on for admin endpoints (/health, /metrics)")
 	agentAddr := flag.String("agent", "http://127.0.0.1:8080", "Local easyrun agent address")
 	tagFilter := flag.String("tag", "", "Only route jobs with this tag (e.g., lb:easyflor)")
 	flag.Parse()
 
-	log.Printf("Starting easylb on %s, agent=%s, tag=%q", *listenAddr, *agentAddr, *tagFilter)
+	log.Printf("Starting easylb")
+	log.Printf("  HTTP traffic: %s", *listenAddr)
+	log.Printf("  Admin:        %s (/health, /metrics)", *adminAddr)
+	log.Printf("  Agent:        %s", *agentAddr)
+	log.Printf("  Tag filter:   %q", *tagFilter)
 
+	// Create metrics collector
+	m := metrics.New()
+
+	// Create route table and watcher
 	routeTable := lb.NewRouteTable()
 	watcher := lb.NewWatcher(*agentAddr, routeTable, *tagFilter)
-	proxy := lb.NewProxy(routeTable)
+	proxy := lb.NewProxy(routeTable, m)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Start watcher (polls easyrun for jobs/tasks)
 	go watcher.Run(ctx)
 
-	server := &http.Server{
+	// Start HTTP traffic server
+	httpServer := &http.Server{
 		Addr:    *listenAddr,
 		Handler: proxy,
 	}
 
 	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		log.Println("Shutting down...")
-		cancel()
-		server.Close()
+		log.Printf("HTTP server listening on %s", *listenAddr)
+		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatalf("HTTP server error: %v", err)
+		}
 	}()
 
-	if err := server.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatalf("Server error: %v", err)
+	// Start admin server (health + metrics)
+	adminMux := http.NewServeMux()
+	adminMux.HandleFunc("/health", handleHealth)
+	adminMux.Handle("/metrics", metrics.NewExporter(m))
+
+	adminServer := &http.Server{
+		Addr:    *adminAddr,
+		Handler: adminMux,
 	}
+
+	go func() {
+		log.Printf("Admin server listening on %s", *adminAddr)
+		if err := adminServer.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatalf("Admin server error: %v", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	log.Println("Shutting down...")
+	cancel()
+	httpServer.Close()
+	adminServer.Close()
+}
+
+// handleHealth returns a simple health check response
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, "ok")
 }
