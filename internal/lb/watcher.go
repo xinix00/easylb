@@ -13,7 +13,6 @@ import (
 // Task represents an easyrun task
 type Task struct {
 	ID      string         `json:"id"`
-	JobID   string         `json:"job_id"`
 	JobName string         `json:"job_name"`
 	State   string         `json:"state"`
 	Ports   map[string]int `json:"ports"`
@@ -93,9 +92,9 @@ func (w *Watcher) sync() {
 		agentByID[agent.ID] = agent
 	}
 
-	jobByID := make(map[string]*Job)
+	jobByName := make(map[string]*Job)
 	for _, job := range jobs {
-		jobByID[job.ID] = job
+		jobByName[job.Name] = job
 	}
 
 	routes := make(map[string]*Route)
@@ -116,7 +115,7 @@ func (w *Watcher) sync() {
 				continue
 			}
 
-			job := jobByID[task.JobID]
+			job := jobByName[task.JobName]
 			if job == nil {
 				continue
 			}
