@@ -158,7 +158,7 @@ func (w *Watcher) watchSSE(ctx context.Context) error {
 	}
 }
 
-// sync does a full fetch of agents, jobs, and tasks, caches everything, and rebuilds routes.
+// sync does a full fetch of agents, jobs, and per-job task status for relevant jobs.
 func (w *Watcher) sync() {
 	agents, err := w.fetchAgents()
 	if err != nil {
@@ -169,12 +169,6 @@ func (w *Watcher) sync() {
 	jobs, err := w.fetchJobs()
 	if err != nil {
 		log.Printf("Failed to fetch jobs: %v", err)
-		return
-	}
-
-	status, err := w.fetchClusterStatus()
-	if err != nil {
-		log.Printf("Failed to fetch cluster status: %v", err)
 		return
 	}
 
@@ -196,15 +190,10 @@ func (w *Watcher) sync() {
 		}
 	}
 
-	// Cache tasks by job
+	// Fetch tasks only for relevant jobs (much leaner than fetching all tasks)
 	w.tasks = make(map[string]map[string][]*Task)
-	for agentID, agentTasks := range status {
-		for _, task := range agentTasks {
-			if w.tasks[task.JobName] == nil {
-				w.tasks[task.JobName] = make(map[string][]*Task)
-			}
-			w.tasks[task.JobName][agentID] = append(w.tasks[task.JobName][agentID], task)
-		}
+	for jobName := range w.relevant {
+		w.syncJob(jobName)
 	}
 
 	w.buildRoutes()
@@ -368,25 +357,6 @@ func (w *Watcher) fetchJobs() ([]*Job, error) {
 	return jobs, nil
 }
 
-func (w *Watcher) fetchClusterStatus() (map[string][]*Task, error) {
-	resp, err := w.client.Get(w.agentAddr + "/v1/status")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-
-	var status struct {
-		TasksByAgent map[string][]*Task `json:"tasks_by_agent"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return nil, err
-	}
-	return status.TasksByAgent, nil
-}
 
 func extractHost(endpoint string) string {
 	u, err := url.Parse(endpoint)
