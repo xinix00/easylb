@@ -161,8 +161,8 @@ sum(rate(easylb_requests_total[5m])) by (backend)
 
 ## How it works
 
-1. Queries local easyrun agent every 5 seconds
-2. Fetches all agents, jobs, and tasks from cluster (via agent proxy to leader)
+1. Connects to local easyrun agent via SSE (`/v1/events`) for real-time updates
+2. On state changes, fetches agents, jobs, and tasks from cluster (via agent proxy to leader)
 3. Builds route table from jobs with `easylb-urlprefix` tags
 4. Only includes tasks in `running` state
 5. Round-robins requests across backends
