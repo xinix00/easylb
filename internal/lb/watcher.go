@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -241,7 +242,7 @@ func (w *Watcher) syncJob(jobName string) {
 
 // buildRoutes rebuilds the route table from cached state.
 func (w *Watcher) buildRoutes() {
-	routes := make(map[string]*Route)
+	routes := make(map[string]*Route, len(w.relevant))
 
 	for jobName := range w.relevant {
 		job := w.jobs[jobName]
@@ -272,7 +273,7 @@ func (w *Watcher) buildRoutes() {
 				}
 
 				backend := &Backend{
-					Address: fmt.Sprintf("%s:%d", host, port),
+					Address: host + ":" + strconv.Itoa(port),
 					Healthy: true,
 				}
 

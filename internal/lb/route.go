@@ -21,14 +21,16 @@ type Route struct {
 
 // RouteTable manages all routes
 type RouteTable struct {
-	mu     sync.RWMutex
-	routes map[string]*Route // pattern -> route
+	mu        sync.RWMutex
+	exact     map[string]*Route // "api.example.com" -> route
+	wildcards map[string]*Route // "*.example.com" -> route
 }
 
 // NewRouteTable creates a new route table
 func NewRouteTable() *RouteTable {
 	return &RouteTable{
-		routes: make(map[string]*Route),
+		exact:     make(map[string]*Route),
+		wildcards: make(map[string]*Route),
 	}
 }
 
@@ -36,7 +38,18 @@ func NewRouteTable() *RouteTable {
 func (rt *RouteTable) Update(routes map[string]*Route) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	rt.routes = routes
+
+	exact := make(map[string]*Route, len(routes))
+	wildcards := make(map[string]*Route)
+	for pattern, route := range routes {
+		if strings.HasPrefix(pattern, "*.") {
+			wildcards[pattern] = route
+		} else {
+			exact[pattern] = route
+		}
+	}
+	rt.exact = exact
+	rt.wildcards = wildcards
 }
 
 // Match finds a route for the given host
@@ -49,14 +62,17 @@ func (rt *RouteTable) Match(host string) *Route {
 		host = host[:idx]
 	}
 
-	// Exact match first
-	if route, ok := rt.routes[host]; ok {
+	// Exact match first (O(1))
+	if route, ok := rt.exact[host]; ok {
 		return route
 	}
 
-	// Wildcard match (*.domain.com)
-	for pattern, route := range rt.routes {
-		if matchWildcard(pattern, host) {
+	// Wildcard match (O(1)): *.domain.com matches app.domain.com
+	// The dot-count constraint means only first-level subdomain matches,
+	// so we extract "*" + everything after the first dot.
+	if idx := strings.Index(host, "."); idx != -1 {
+		wildcard := "*" + host[idx:]
+		if route, ok := rt.wildcards[wildcard]; ok {
 			return route
 		}
 	}
@@ -82,13 +98,4 @@ func (r *Route) GetHealthyBackend() *Backend {
 	return nil
 }
 
-// matchWildcard checks if host matches pattern like *.domain.com
-func matchWildcard(pattern, host string) bool {
-	if !strings.HasPrefix(pattern, "*.") {
-		return false
-	}
-
-	suffix := pattern[1:] // ".domain.com"
-	return strings.HasSuffix(host, suffix) && strings.Count(host, ".") == strings.Count(suffix, ".")
-}
 

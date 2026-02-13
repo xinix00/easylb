@@ -43,7 +43,7 @@ func (e *Exporter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("# HELP easylb_request_duration_seconds Request duration percentiles\n")
 	b.WriteString("# TYPE easylb_request_duration_seconds summary\n")
 
-	percentiles := []float64{0.5, 0.9, 0.95, 0.99}
+	quantiles := []float64{0.5, 0.9, 0.95, 0.99}
 	for _, domain := range e.metrics.AllDomains() {
 		for _, backend := range e.metrics.AllBackends(domain) {
 			sampleCount := e.metrics.SampleCount(domain, backend)
@@ -51,18 +51,20 @@ func (e *Exporter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			for _, p := range percentiles {
-				value := e.metrics.Percentile(domain, backend, p)
+			// Calculate all percentiles from a single copy+sort
+			values := e.metrics.Percentiles(domain, backend, quantiles)
+
+			for i, q := range quantiles {
 				fmt.Fprintf(&b, "easylb_request_duration_seconds{domain=%q,backend=%q,quantile=\"%.2f\"} %.6f\n",
-					domain, backend, p, value)
+					domain, backend, q, values[i])
 			}
 
 			// Add _count and _sum for summary type
 			fmt.Fprintf(&b, "easylb_request_duration_seconds_count{domain=%q,backend=%q} %d\n",
 				domain, backend, sampleCount)
 
-			// Calculate sum from percentile (approximate)
-			sum := e.metrics.Percentile(domain, backend, 0.5) * float64(sampleCount)
+			// Calculate sum from p50 (approximate)
+			sum := values[0] * float64(sampleCount)
 			fmt.Fprintf(&b, "easylb_request_duration_seconds_sum{domain=%q,backend=%q} %.6f\n",
 				domain, backend, sum)
 		}

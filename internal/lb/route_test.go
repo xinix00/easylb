@@ -2,24 +2,37 @@ package lb
 
 import "testing"
 
-func TestMatchWildcard(t *testing.T) {
+func TestWildcardRouteMatch(t *testing.T) {
+	rt := NewRouteTable()
+	rt.Update(map[string]*Route{
+		"*.easyflor.eu": {Pattern: "*.easyflor.eu", Backends: []*Backend{{Address: "10.0.0.1:80", Healthy: true}}},
+		"*.example.com": {Pattern: "*.example.com", Backends: []*Backend{{Address: "10.0.0.2:80", Healthy: true}}},
+	})
+
 	tests := []struct {
-		pattern string
 		host    string
-		want    bool
+		want    string
+		wantNil bool
 	}{
-		{"*.easyflor.eu", "app.easyflor.eu", true},
-		{"*.easyflor.eu", "api.easyflor.eu", true},
-		{"*.easyflor.eu", "easyflor.eu", false},
-		{"*.easyflor.eu", "sub.app.easyflor.eu", false}, // Only one level
-		{"*.example.com", "test.example.com", true},
-		{"api.example.com", "api.example.com", false}, // Not a wildcard pattern
+		{"app.easyflor.eu", "*.easyflor.eu", false},
+		{"api.easyflor.eu", "*.easyflor.eu", false},
+		{"easyflor.eu", "", true},                   // No subdomain = no match
+		{"sub.app.easyflor.eu", "", true},            // Multi-level = no match
+		{"test.example.com", "*.example.com", false},
 	}
 
 	for _, tt := range tests {
-		got := matchWildcard(tt.pattern, tt.host)
-		if got != tt.want {
-			t.Errorf("matchWildcard(%q, %q) = %v; want %v", tt.pattern, tt.host, got, tt.want)
+		route := rt.Match(tt.host)
+		if tt.wantNil {
+			if route != nil {
+				t.Errorf("Match(%q) = %q; want nil", tt.host, route.Pattern)
+			}
+		} else {
+			if route == nil {
+				t.Errorf("Match(%q) = nil; want %q", tt.host, tt.want)
+			} else if route.Pattern != tt.want {
+				t.Errorf("Match(%q) = %q; want %q", tt.host, route.Pattern, tt.want)
+			}
 		}
 	}
 }
