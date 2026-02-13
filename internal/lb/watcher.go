@@ -1,12 +1,14 @@
 package lb
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -38,6 +40,12 @@ type Watcher struct {
 	client     *http.Client
 	interval   time.Duration
 	tagFilter  string // e.g., "lb:easyflor" means only jobs with tag lb=easyflor
+
+	// Cached state for incremental updates
+	agentHosts map[string]string              // agentID → hostname
+	jobs       map[string]*Job                // jobName → job
+	relevant   map[string]struct{}            // job names that contribute routes
+	tasks      map[string]map[string][]*Task  // jobName → agentID → tasks
 }
 
 // NewWatcher creates a new watcher
@@ -51,23 +59,106 @@ func NewWatcher(agentAddr string, routeTable *RouteTable, tagFilter string) *Wat
 	}
 }
 
-// Run starts watching for changes
+// Run connects to the SSE event stream and syncs on state changes.
+// On disconnect, retries after a short delay.
 func (w *Watcher) Run(ctx context.Context) {
-	ticker := time.NewTicker(w.interval)
-	defer ticker.Stop()
-
-	w.sync()
-
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		err := w.watchSSE(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		log.Printf("SSE disconnected: %v, reconnecting in %v", err, w.interval)
 		select {
+		case <-time.After(w.interval):
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			w.sync()
 		}
 	}
 }
 
+// watchSSE connects to the agent's SSE stream and triggers debounced
+// sync on any state change. Does a full sync on connect to seed routes.
+func (w *Watcher) watchSSE(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", w.agentAddr+"/v1/events", nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := (&http.Client{}).Do(req) // no timeout — SSE is long-lived
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &url.Error{Op: "GET", URL: w.agentAddr + "/v1/events", Err: http.ErrNotSupported}
+	}
+
+	w.sync() // seed routes on (re)connect
+	log.Printf("SSE connected to %s/v1/events", w.agentAddr)
+
+	lineCh := make(chan string)
+	go func() {
+		defer close(lineCh)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			lineCh <- scanner.Text()
+		}
+	}()
+
+	debounce := time.NewTimer(0)
+	if !debounce.Stop() {
+		<-debounce.C
+	}
+	pending := make(map[string]struct{})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case line, ok := <-lineCh:
+			if !ok {
+				return nil // stream closed
+			}
+			if strings.HasPrefix(line, "data:") {
+				job := parseJobFromData(line)
+				if job == "" {
+					continue
+				}
+				_, isRelevant := w.relevant[job]
+				_, isKnown := w.jobs[job]
+				if !isRelevant && isKnown {
+					continue // known irrelevant job, skip
+				}
+				if len(pending) == 0 {
+					debounce.Reset(500 * time.Millisecond)
+				}
+				pending[job] = struct{}{}
+			}
+		case <-debounce.C:
+			needFullSync := false
+			for job := range pending {
+				if _, known := w.jobs[job]; !known {
+					needFullSync = true
+					break
+				}
+			}
+			if needFullSync {
+				w.sync() // new job appeared, need full sync
+			} else {
+				for job := range pending {
+					w.syncJob(job)
+				}
+			}
+			pending = make(map[string]struct{})
+		}
+	}
+}
+
+// sync does a full fetch of agents, jobs, and tasks, caches everything, and rebuilds routes.
 func (w *Watcher) sync() {
 	agents, err := w.fetchAgents()
 	if err != nil {
@@ -87,65 +178,112 @@ func (w *Watcher) sync() {
 		return
 	}
 
-	agentByID := make(map[string]*Agent)
+	// Cache agents
+	w.agentHosts = make(map[string]string)
 	for _, agent := range agents {
-		agentByID[agent.ID] = agent
+		if h := extractHost(agent.Endpoint); h != "" {
+			w.agentHosts[agent.ID] = h
+		}
 	}
 
-	jobByName := make(map[string]*Job)
+	// Cache jobs + determine relevant
+	w.jobs = make(map[string]*Job)
+	w.relevant = make(map[string]struct{})
 	for _, job := range jobs {
-		jobByName[job.Name] = job
+		w.jobs[job.Name] = job
+		if w.jobMatchesFilter(job) && jobHasURLPrefix(job) {
+			w.relevant[job.Name] = struct{}{}
+		}
 	}
 
+	// Cache tasks by job
+	w.tasks = make(map[string]map[string][]*Task)
+	for agentID, agentTasks := range status {
+		for _, task := range agentTasks {
+			if w.tasks[task.JobName] == nil {
+				w.tasks[task.JobName] = make(map[string][]*Task)
+			}
+			w.tasks[task.JobName][agentID] = append(w.tasks[task.JobName][agentID], task)
+		}
+	}
+
+	w.buildRoutes()
+}
+
+// syncJob fetches only the tasks for a single job and rebuilds routes from cache.
+func (w *Watcher) syncJob(jobName string) {
+	resp, err := w.client.Get(fmt.Sprintf("%s/v1/jobs/%s/status", w.agentAddr, jobName))
+	if err != nil {
+		log.Printf("Failed to fetch job status for %s: %v", jobName, err)
+		w.sync()
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		w.sync()
+		return
+	}
+
+	var status struct {
+		Agents       []*Agent            `json:"agents"`
+		TasksByAgent map[string][]*Task  `json:"tasks_by_agent"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		w.sync()
+		return
+	}
+
+	// Update agent hosts from response
+	for _, agent := range status.Agents {
+		if h := extractHost(agent.Endpoint); h != "" {
+			w.agentHosts[agent.ID] = h
+		}
+	}
+
+	// Replace cached tasks for this job
+	w.tasks[jobName] = make(map[string][]*Task)
+	for agentID, tasks := range status.TasksByAgent {
+		w.tasks[jobName][agentID] = tasks
+	}
+
+	w.buildRoutes()
+}
+
+// buildRoutes rebuilds the route table from cached state.
+func (w *Watcher) buildRoutes() {
 	routes := make(map[string]*Route)
 
-	for agentID, tasks := range status {
-		agent := agentByID[agentID]
-		if agent == nil {
+	for jobName := range w.relevant {
+		job := w.jobs[jobName]
+		if job == nil {
 			continue
 		}
 
-		agentHost := extractHost(agent.Endpoint)
-		if agentHost == "" {
+		pattern := job.Tags["easylb-urlprefix"]
+		if pattern == "" {
 			continue
 		}
 
-		for _, task := range tasks {
-			if task.State != "running" {
+		portName := job.Tags["easylb-port"]
+		for agentID, tasks := range w.tasks[jobName] {
+			host := w.agentHosts[agentID]
+			if host == "" {
 				continue
 			}
 
-			job := jobByName[task.JobName]
-			if job == nil {
-				continue
-			}
-
-			if !w.jobMatchesFilter(job) {
-				continue
-			}
-
-			for _, tagValue := range job.Tags {
-				pattern, ok := ParseURLPrefix(tagValue)
-				if !ok {
+			for _, task := range tasks {
+				if task.State != "running" {
 					continue
 				}
 
-				port := 0
-				if p, ok := task.Ports["http"]; ok {
-					port = p
-				} else {
-					for _, p := range task.Ports {
-						port = p
-						break
-					}
-				}
-
+				port := taskPort(task, portName)
 				if port == 0 {
 					continue
 				}
 
 				backend := &Backend{
-					Address: fmt.Sprintf("%s:%d", agentHost, port),
+					Address: fmt.Sprintf("%s:%d", host, port),
 					Healthy: true,
 				}
 
@@ -163,6 +301,35 @@ func (w *Watcher) sync() {
 
 	w.routeTable.Update(routes)
 	log.Printf("Updated routes: %d patterns", len(routes))
+}
+
+// parseJobFromData extracts the job name from an SSE data line.
+func parseJobFromData(line string) string {
+	data := strings.TrimPrefix(line, "data:")
+	data = strings.TrimSpace(data)
+	var ev struct {
+		Job string `json:"job"`
+	}
+	json.Unmarshal([]byte(data), &ev)
+	return ev.Job
+}
+
+// taskPort returns the named port (from job's "port" tag) or first available.
+func taskPort(task *Task, portName string) int {
+	if portName != "" {
+		if p, ok := task.Ports[portName]; ok {
+			return p
+		}
+	}
+	for _, p := range task.Ports {
+		return p
+	}
+	return 0
+}
+
+// jobHasURLPrefix checks if a job has the easylb-urlprefix tag.
+func jobHasURLPrefix(job *Job) bool {
+	return job.Tags["easylb-urlprefix"] != ""
 }
 
 func (w *Watcher) fetchAgents() ([]*Agent, error) {

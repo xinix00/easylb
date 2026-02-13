@@ -92,11 +92,3 @@ func matchWildcard(pattern, host string) bool {
 	return strings.HasSuffix(host, suffix) && strings.Count(host, ".") == strings.Count(suffix, ".")
 }
 
-// ParseURLPrefix parses a tag like "urlprefix:*.easyflor.eu" or "urlprefix:api.easyflor.eu"
-func ParseURLPrefix(tag string) (pattern string, ok bool) {
-	const prefix = "urlprefix:"
-	if !strings.HasPrefix(tag, prefix) {
-		return "", false
-	}
-	return tag[len(prefix):], true
-}

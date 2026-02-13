@@ -2,28 +2,6 @@ package lb
 
 import "testing"
 
-func TestParseURLPrefix(t *testing.T) {
-	tests := []struct {
-		tag     string
-		want    string
-		wantOK  bool
-	}{
-		{"urlprefix:*.easyflor.eu", "*.easyflor.eu", true},
-		{"urlprefix:api.easyflor.eu", "api.easyflor.eu", true},
-		{"urlprefix:localhost", "localhost", true},
-		{"other:tag", "", false},
-		{"urlprefix:", "", true},
-		{"", "", false},
-	}
-
-	for _, tt := range tests {
-		got, ok := ParseURLPrefix(tt.tag)
-		if got != tt.want || ok != tt.wantOK {
-			t.Errorf("ParseURLPrefix(%q) = %q, %v; want %q, %v", tt.tag, got, ok, tt.want, tt.wantOK)
-		}
-	}
-}
-
 func TestMatchWildcard(t *testing.T) {
 	tests := []struct {
 		pattern string

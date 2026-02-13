@@ -4,7 +4,7 @@ Simple hostname-based load balancer for easyrun with Prometheus metrics.
 
 ## Features
 
-- Routes traffic based on `urlprefix:` tags from easyrun jobs
+- Routes traffic based on `easylb-urlprefix` tags from easyrun jobs
 - Wildcard support (`*.domain.com`)
 - Round-robin load balancing
 - Only routes to running tasks
@@ -47,7 +47,8 @@ Jobs need the matching tag:
 ```yaml
 tags:
   lb: "easyflor"
-  urlprefix: "urlprefix:*.easyflor.eu"
+  easylb-urlprefix: "*.easyflor.eu"
+  easylb-port: "http"  # optional: which port from task.Ports to use
 ```
 
 ## Tags
@@ -56,9 +57,11 @@ Add tags to your easyrun job:
 
 ```yaml
 tags:
-  urlprefix: "urlprefix:app.example.com"
+  easylb-urlprefix: "app.example.com"
   # or wildcard
-  urlprefix: "urlprefix:*.example.com"
+  easylb-urlprefix: "*.example.com"
+  # optional: select which named port to use
+  easylb-port: "http"
 ```
 
 ## Prometheus Metrics
@@ -160,7 +163,7 @@ sum(rate(easylb_requests_total[5m])) by (backend)
 
 1. Queries local easyrun agent every 5 seconds
 2. Fetches all agents, jobs, and tasks from cluster (via agent proxy to leader)
-3. Builds route table from jobs with `urlprefix:` tags
+3. Builds route table from jobs with `easylb-urlprefix` tags
 4. Only includes tasks in `running` state
 5. Round-robins requests across backends
 6. **Tracks every request** - domain, backend, status code, latency

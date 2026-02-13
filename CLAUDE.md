@@ -14,6 +14,6 @@ internal/lb/
 
 ## Design
 
-- Routes based on `urlprefix:` tags from easyrun jobs
+- Routes based on `easylb-urlprefix` tags from easyrun jobs
 - Only routes to tasks with `state == "running"`
 - Health checks are handled by easyrun, not easylb
