@@ -19,6 +19,7 @@ func main() {
 	adminAddr := flag.String("admin-listen", ":9091", "Address to listen on for admin endpoints (/health, /metrics)")
 	agentAddr := flag.String("agent", "http://127.0.0.1:8080", "Local easyrun agent address")
 	tagFilter := flag.String("tag", "", "Only route jobs with this tag (e.g., lb:easyflor)")
+	apiKey := flag.String("api-key", "", "API key for easyrun agent authentication")
 	flag.Parse()
 
 	log.Printf("Starting easylb")
@@ -32,7 +33,7 @@ func main() {
 
 	// Create route table and watcher
 	routeTable := lb.NewRouteTable()
-	watcher := lb.NewWatcher(*agentAddr, routeTable, *tagFilter)
+	watcher := lb.NewWatcher(*agentAddr, routeTable, *tagFilter, *apiKey)
 	proxy := lb.NewProxy(routeTable, m)
 
 	ctx, cancel := context.WithCancel(context.Background())

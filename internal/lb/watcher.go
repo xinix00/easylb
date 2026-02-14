@@ -41,6 +41,7 @@ type Watcher struct {
 	client     *http.Client
 	interval   time.Duration
 	tagFilter  string // e.g., "lb:easyflor" means only jobs with tag lb=easyflor
+	apiKey     string
 
 	// Cached state for incremental updates
 	agentHosts map[string]string              // agentID → hostname
@@ -50,14 +51,27 @@ type Watcher struct {
 }
 
 // NewWatcher creates a new watcher
-func NewWatcher(agentAddr string, routeTable *RouteTable, tagFilter string) *Watcher {
+func NewWatcher(agentAddr string, routeTable *RouteTable, tagFilter string, apiKey string) *Watcher {
 	return &Watcher{
 		agentAddr:  agentAddr,
 		routeTable: routeTable,
 		client:     &http.Client{Timeout: 10 * time.Second},
 		interval:   5 * time.Second,
 		tagFilter:  tagFilter,
+		apiKey:     apiKey,
 	}
+}
+
+// get performs a GET request with API key authentication
+func (w *Watcher) get(url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if w.apiKey != "" {
+		req.Header.Set("X-API-Key", w.apiKey)
+	}
+	return w.client.Do(req)
 }
 
 // Run connects to the SSE event stream and syncs on state changes.
@@ -86,6 +100,9 @@ func (w *Watcher) watchSSE(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", w.agentAddr+"/v1/events", nil)
 	if err != nil {
 		return err
+	}
+	if w.apiKey != "" {
+		req.Header.Set("X-API-Key", w.apiKey)
 	}
 
 	resp, err := (&http.Client{}).Do(req) // no timeout — SSE is long-lived
@@ -202,7 +219,7 @@ func (w *Watcher) sync() {
 
 // syncJob fetches only the tasks for a single job and rebuilds routes from cache.
 func (w *Watcher) syncJob(jobName string) {
-	resp, err := w.client.Get(fmt.Sprintf("%s/v1/jobs/%s/status", w.agentAddr, jobName))
+	resp, err := w.get(fmt.Sprintf("%s/v1/jobs/%s/status", w.agentAddr, jobName))
 	if err != nil {
 		log.Printf("Failed to fetch job status for %s: %v", jobName, err)
 		w.sync()
@@ -323,7 +340,7 @@ func jobHasURLPrefix(job *Job) bool {
 }
 
 func (w *Watcher) fetchAgents() ([]*Agent, error) {
-	resp, err := w.client.Get(w.agentAddr + "/v1/agents")
+	resp, err := w.get(w.agentAddr + "/v1/agents")
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +358,7 @@ func (w *Watcher) fetchAgents() ([]*Agent, error) {
 }
 
 func (w *Watcher) fetchJobs() ([]*Job, error) {
-	resp, err := w.client.Get(w.agentAddr + "/v1/jobs")
+	resp, err := w.get(w.agentAddr + "/v1/jobs")
 	if err != nil {
 		return nil, err
 	}
