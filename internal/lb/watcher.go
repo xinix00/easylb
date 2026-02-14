@@ -315,10 +315,10 @@ func parseJobFromData(line string) string {
 	data := strings.TrimPrefix(line, "data:")
 	data = strings.TrimSpace(data)
 	var ev struct {
-		Job string `json:"job"`
+		Name string `json:"name"`
 	}
 	json.Unmarshal([]byte(data), &ev)
-	return ev.Job
+	return ev.Name
 }
 
 // taskPort returns the named port (from job's "port" tag) or first available.

@@ -237,10 +237,10 @@ func BenchmarkProxyHandler(b *testing.B) {
 
 func BenchmarkParseJobFromData(b *testing.B) {
 	lines := []string{
-		`data: {"job":"my-api","type":"task_started","task_id":"abc123"}`,
-		`data: {"job":"nginx-proxy","type":"task_stopped"}`,
-		`data: {"job":"redis-cache","type":"state_changed","state":"running"}`,
-		`data: {"job":"worker-pool-long-name","type":"task_failed","error":"exit 1"}`,
+		`data: {"name":"my-api","type":"task_started","task_id":"abc123"}`,
+		`data: {"name":"nginx-proxy","type":"task_stopped"}`,
+		`data: {"name":"redis-cache","type":"state_changed","state":"running"}`,
+		`data: {"name":"worker-pool-long-name","type":"task_failed","error":"exit 1"}`,
 	}
 
 	b.ResetTimer()
