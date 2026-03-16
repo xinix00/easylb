@@ -1,6 +1,7 @@
 package lb
 
 import (
+	"easylib"
 	"fmt"
 	"io"
 	"log"
@@ -159,9 +160,9 @@ func BenchmarkBuildRoutes(b *testing.B) {
 	w := &Watcher{
 		routeTable: rt,
 		agentHosts: make(map[string]string),
-		jobs:       make(map[string]*Job),
+		jobs:       make(map[string]*easylib.Job),
 		relevant:   make(map[string]struct{}),
-		tasks:      make(map[string]map[string][]*Task),
+		tasks:      make(map[string]map[string][]*easylib.Task),
 	}
 
 	for i := 0; i < 10; i++ {
@@ -170,7 +171,7 @@ func BenchmarkBuildRoutes(b *testing.B) {
 
 	for i := 0; i < 100; i++ {
 		jobName := fmt.Sprintf("job-%d", i)
-		w.jobs[jobName] = &Job{
+		w.jobs[jobName] = &easylib.Job{
 			ID:   fmt.Sprintf("jobid-%d", i),
 			Name: jobName,
 			Tags: map[string]string{
@@ -180,10 +181,10 @@ func BenchmarkBuildRoutes(b *testing.B) {
 		}
 		w.relevant[jobName] = struct{}{}
 
-		w.tasks[jobName] = make(map[string][]*Task)
+		w.tasks[jobName] = make(map[string][]*easylib.Task)
 		for a := 0; a < 5; a++ {
 			agentID := fmt.Sprintf("agent-%d", a%10)
-			w.tasks[jobName][agentID] = append(w.tasks[jobName][agentID], &Task{
+			w.tasks[jobName][agentID] = append(w.tasks[jobName][agentID], &easylib.Task{
 				ID:      fmt.Sprintf("task-%d-%d", i, a),
 				JobName: jobName,
 				State:   "running",
@@ -247,7 +248,7 @@ func BenchmarkParseJobFromData(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		job := parseJobFromData(lines[i%len(lines)])
+		job := easylib.ParseJobFromSSE(lines[i%len(lines)])
 		if job == "" {
 			b.Fatal("expected job name")
 		}

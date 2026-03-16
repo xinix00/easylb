@@ -3,7 +3,6 @@ package lb
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,43 +10,23 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"easylib"
 )
-
-// Task represents an easyrun task
-type Task struct {
-	ID      string         `json:"id"`
-	JobName string         `json:"job_name"`
-	State   string         `json:"state"`
-	Ports   map[string]int `json:"ports"`
-}
-
-// Job represents an easyrun job
-type Job struct {
-	ID   string            `json:"id"`
-	Name string            `json:"name"`
-	Tags map[string]string `json:"tags"`
-}
-
-// Agent represents an easyrun agent
-type Agent struct {
-	ID       string `json:"id"`
-	Endpoint string `json:"endpoint"`
-}
 
 // Watcher watches local easyrun agent for task changes
 type Watcher struct {
 	agentAddr  string
 	routeTable *RouteTable
-	client     *http.Client
+	client     *easylib.Client
 	interval   time.Duration
 	tagFilter  string // e.g., "lb:easyflor" means only jobs with tag lb=easyflor
-	apiKey     string
 
 	// Cached state for incremental updates
-	agentHosts map[string]string              // agentID → hostname
-	jobs       map[string]*Job                // jobName → job
-	relevant   map[string]struct{}            // job names that contribute routes
-	tasks      map[string]map[string][]*Task  // jobName → agentID → tasks
+	agentHosts map[string]string                        // agentID → hostname
+	jobs       map[string]*easylib.Job                  // jobName → job
+	relevant   map[string]struct{}                      // job names that contribute routes
+	tasks      map[string]map[string][]*easylib.Task    // jobName → agentID → tasks
 }
 
 // NewWatcher creates a new watcher
@@ -55,23 +34,10 @@ func NewWatcher(agentAddr string, routeTable *RouteTable, tagFilter string, apiK
 	return &Watcher{
 		agentAddr:  agentAddr,
 		routeTable: routeTable,
-		client:     &http.Client{Timeout: 10 * time.Second},
+		client:     easylib.NewClient(apiKey),
 		interval:   5 * time.Second,
 		tagFilter:  tagFilter,
-		apiKey:     apiKey,
 	}
-}
-
-// get performs a GET request with API key authentication
-func (w *Watcher) get(url string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	if w.apiKey != "" {
-		req.Header.Set("X-API-Key", w.apiKey)
-	}
-	return w.client.Do(req)
 }
 
 // Run connects to the SSE event stream and syncs on state changes.
@@ -101,8 +67,8 @@ func (w *Watcher) watchSSE(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if w.apiKey != "" {
-		req.Header.Set("X-API-Key", w.apiKey)
+	if w.client.APIKey != "" {
+		req.Header.Set("X-API-Key", w.client.APIKey)
 	}
 
 	resp, err := (&http.Client{}).Do(req) // no timeout — SSE is long-lived
@@ -142,7 +108,7 @@ func (w *Watcher) watchSSE(ctx context.Context) error {
 				return nil // stream closed
 			}
 			if strings.HasPrefix(line, "data:") {
-				job := parseJobFromData(line)
+				job := easylib.ParseJobFromSSE(line)
 				if job == "" {
 					continue
 				}
@@ -178,13 +144,13 @@ func (w *Watcher) watchSSE(ctx context.Context) error {
 
 // sync does a full fetch of agents, jobs, and per-job task status for relevant jobs.
 func (w *Watcher) sync() {
-	agents, err := w.fetchAgents()
+	agents, err := easylib.Fetch[[]easylib.Agent](w.client, w.agentAddr+"/v1/agents")
 	if err != nil {
 		log.Printf("Failed to fetch agents: %v", err)
 		return
 	}
 
-	jobs, err := w.fetchJobs()
+	jobs, err := easylib.Fetch[[]easylib.Job](w.client, w.agentAddr+"/v1/jobs")
 	if err != nil {
 		log.Printf("Failed to fetch jobs: %v", err)
 		return
@@ -199,17 +165,17 @@ func (w *Watcher) sync() {
 	}
 
 	// Cache jobs + determine relevant
-	w.jobs = make(map[string]*Job)
+	w.jobs = make(map[string]*easylib.Job)
 	w.relevant = make(map[string]struct{})
-	for _, job := range jobs {
-		w.jobs[job.Name] = job
-		if w.jobMatchesFilter(job) && jobHasURLPrefix(job) {
-			w.relevant[job.Name] = struct{}{}
+	for i := range jobs {
+		w.jobs[jobs[i].Name] = &jobs[i]
+		if w.jobMatchesFilter(&jobs[i]) && jobs[i].Tags["easylb-urlprefix"] != "" {
+			w.relevant[jobs[i].Name] = struct{}{}
 		}
 	}
 
-	// Fetch tasks only for relevant jobs (much leaner than fetching all tasks)
-	w.tasks = make(map[string]map[string][]*Task)
+	// Fetch tasks only for relevant jobs
+	w.tasks = make(map[string]map[string][]*easylib.Task)
 	for jobName := range w.relevant {
 		w.syncJob(jobName)
 	}
@@ -219,24 +185,12 @@ func (w *Watcher) sync() {
 
 // syncJob fetches only the tasks for a single job and rebuilds routes from cache.
 func (w *Watcher) syncJob(jobName string) {
-	resp, err := w.get(fmt.Sprintf("%s/v1/jobs/%s/status", w.agentAddr, jobName))
+	status, err := easylib.Fetch[struct {
+		Agents       []easylib.Agent            `json:"agents"`
+		TasksByAgent map[string][]*easylib.Task  `json:"tasks_by_agent"`
+	}](w.client, fmt.Sprintf("%s/v1/jobs/%s/status", w.agentAddr, jobName))
 	if err != nil {
 		log.Printf("Failed to fetch job status for %s: %v", jobName, err)
-		w.sync()
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		w.sync()
-		return
-	}
-
-	var status struct {
-		Agents       []*Agent            `json:"agents"`
-		TasksByAgent map[string][]*Task  `json:"tasks_by_agent"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		w.sync()
 		return
 	}
@@ -249,11 +203,7 @@ func (w *Watcher) syncJob(jobName string) {
 	}
 
 	// Replace cached tasks for this job
-	w.tasks[jobName] = make(map[string][]*Task)
-	for agentID, tasks := range status.TasksByAgent {
-		w.tasks[jobName][agentID] = tasks
-	}
-
+	w.tasks[jobName] = status.TasksByAgent
 	w.buildRoutes()
 }
 
@@ -310,19 +260,8 @@ func (w *Watcher) buildRoutes() {
 	log.Printf("Updated routes: %d patterns", len(routes))
 }
 
-// parseJobFromData extracts the job name from an SSE data line.
-func parseJobFromData(line string) string {
-	data := strings.TrimPrefix(line, "data:")
-	data = strings.TrimSpace(data)
-	var ev struct {
-		Name string `json:"name"`
-	}
-	json.Unmarshal([]byte(data), &ev)
-	return ev.Name
-}
-
 // taskPort returns the named port (from job's "port" tag) or first available.
-func taskPort(task *Task, portName string) int {
+func taskPort(task *easylib.Task, portName string) int {
 	if portName != "" {
 		if p, ok := task.Ports[portName]; ok {
 			return p
@@ -333,48 +272,6 @@ func taskPort(task *Task, portName string) int {
 	}
 	return 0
 }
-
-// jobHasURLPrefix checks if a job has the easylb-urlprefix tag.
-func jobHasURLPrefix(job *Job) bool {
-	return job.Tags["easylb-urlprefix"] != ""
-}
-
-func (w *Watcher) fetchAgents() ([]*Agent, error) {
-	resp, err := w.get(w.agentAddr + "/v1/agents")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-
-	var agents []*Agent
-	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
-		return nil, err
-	}
-	return agents, nil
-}
-
-func (w *Watcher) fetchJobs() ([]*Job, error) {
-	resp, err := w.get(w.agentAddr + "/v1/jobs")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-
-	var jobs []*Job
-	if err := json.NewDecoder(resp.Body).Decode(&jobs); err != nil {
-		return nil, err
-	}
-	return jobs, nil
-}
-
 
 func extractHost(endpoint string) string {
 	u, err := url.Parse(endpoint)
@@ -395,7 +292,7 @@ func parseTagFilter(filter string) (string, string) {
 }
 
 // jobMatchesFilter checks if job has the required tag
-func (w *Watcher) jobMatchesFilter(job *Job) bool {
+func (w *Watcher) jobMatchesFilter(job *easylib.Job) bool {
 	if w.tagFilter == "" {
 		return true // no filter = match all
 	}
