@@ -256,14 +256,29 @@ func (w *Watcher) buildRoutes() {
 		}
 	}
 
-	w.routeTable.Update(routes)
-	for pattern, route := range routes {
-		log.Printf("Route %s: %d backends", pattern, len(route.Backends))
-		for _, b := range route.Backends {
-			log.Printf("  backend: %s", b.Address)
+	// Debug: log what we're building
+	for jobName := range w.relevant {
+		job := w.jobs[jobName]
+		if job == nil {
+			continue
+		}
+		pattern := job.Tags["easylb-urlprefix"]
+		portName := job.Tags["easylb-port"]
+		tasksByAgent := w.tasks[jobName]
+		log.Printf("[debug] job=%s pattern=%q portName=%q agents=%d", jobName, pattern, portName, len(tasksByAgent))
+		for agentID, tasks := range tasksByAgent {
+			host := w.agentHosts[agentID]
+			log.Printf("[debug]   agent=%s host=%q tasks=%d", agentID, host, len(tasks))
+			for _, task := range tasks {
+				port := taskPort(task, portName)
+				log.Printf("[debug]     task=%s state=%s port=%d", task.ID[:8], task.State, port)
+			}
 		}
 	}
-	log.Printf("Updated routes: %d patterns", len(routes))
+
+	w.routeTable.Update(routes)
+	log.Printf("Updated routes: %d patterns, %d total backends",
+		len(routes), func() int { n := 0; for _, r := range routes { n += len(r.Backends) }; return n }())
 }
 
 // taskPort returns the named port (from job's "port" tag) or first available.
