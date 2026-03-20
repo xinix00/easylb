@@ -257,6 +257,12 @@ func (w *Watcher) buildRoutes() {
 	}
 
 	w.routeTable.Update(routes)
+	for pattern, route := range routes {
+		log.Printf("Route %s: %d backends", pattern, len(route.Backends))
+		for _, b := range route.Backends {
+			log.Printf("  backend: %s", b.Address)
+		}
+	}
 	log.Printf("Updated routes: %d patterns", len(routes))
 }
 
