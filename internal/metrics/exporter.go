@@ -23,8 +23,8 @@ func (e *Exporter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var b strings.Builder
 
 	// Request counters per domain/backend/status
-	b.WriteString("# HELP easylb_requests_total Total HTTP requests\n")
-	b.WriteString("# TYPE easylb_requests_total counter\n")
+	b.WriteString("# HELP hoplb_requests_total Total HTTP requests\n")
+	b.WriteString("# TYPE hoplb_requests_total counter\n")
 
 	counts := e.metrics.RequestCounts()
 	for _, domain := range e.metrics.AllDomains() {
@@ -32,7 +32,7 @@ func (e *Exporter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for _, backend := range e.metrics.AllBackends(domain) {
 			codes := backends[backend]
 			for code, count := range codes {
-				fmt.Fprintf(&b, "easylb_requests_total{domain=%q,backend=%q,code=\"%d\"} %d\n",
+				fmt.Fprintf(&b, "hoplb_requests_total{domain=%q,backend=%q,code=\"%d\"} %d\n",
 					domain, backend, code, count)
 			}
 		}
@@ -40,8 +40,8 @@ func (e *Exporter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("\n")
 
 	// Request duration percentiles
-	b.WriteString("# HELP easylb_request_duration_seconds Request duration percentiles\n")
-	b.WriteString("# TYPE easylb_request_duration_seconds summary\n")
+	b.WriteString("# HELP hoplb_request_duration_seconds Request duration percentiles\n")
+	b.WriteString("# TYPE hoplb_request_duration_seconds summary\n")
 
 	quantiles := []float64{0.5, 0.9, 0.95, 0.99}
 	for _, domain := range e.metrics.AllDomains() {
@@ -55,17 +55,17 @@ func (e *Exporter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			values := e.metrics.Percentiles(domain, backend, quantiles)
 
 			for i, q := range quantiles {
-				fmt.Fprintf(&b, "easylb_request_duration_seconds{domain=%q,backend=%q,quantile=\"%.2f\"} %.6f\n",
+				fmt.Fprintf(&b, "hoplb_request_duration_seconds{domain=%q,backend=%q,quantile=\"%.2f\"} %.6f\n",
 					domain, backend, q, values[i])
 			}
 
 			// Add _count and _sum for summary type
-			fmt.Fprintf(&b, "easylb_request_duration_seconds_count{domain=%q,backend=%q} %d\n",
+			fmt.Fprintf(&b, "hoplb_request_duration_seconds_count{domain=%q,backend=%q} %d\n",
 				domain, backend, sampleCount)
 
 			// Calculate sum from p50 (approximate)
 			sum := values[0] * float64(sampleCount)
-			fmt.Fprintf(&b, "easylb_request_duration_seconds_sum{domain=%q,backend=%q} %.6f\n",
+			fmt.Fprintf(&b, "hoplb_request_duration_seconds_sum{domain=%q,backend=%q} %.6f\n",
 				domain, backend, sum)
 		}
 	}

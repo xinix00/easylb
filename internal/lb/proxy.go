@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"time"
 
-	"easylb/internal/metrics"
+	"hoplb/internal/metrics"
 )
 
 // Proxy is a reverse proxy that routes based on the route table and tracks metrics

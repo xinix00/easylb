@@ -37,11 +37,11 @@ jobs:
 
           for plat in $PLATFORMS; do
             IFS=: read -r os arch <<< "$plat"
-            dir="dist/easylb-${VERSION}-${os}-${arch}"
+            dir="dist/hoplb-${VERSION}-${os}-${arch}"
             mkdir -p "$dir"
 
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags="$LDFLAGS" -o "$dir/easylb" ./cmd/easylb
+              go build -trimpath -ldflags="$LDFLAGS" -o "$dir/hoplb" ./cmd/hoplb
 
             tar czf "${dir}.tar.gz" -C dist "$(basename $dir)"
             rm -rf "$dir"

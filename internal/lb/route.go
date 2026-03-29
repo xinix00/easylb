@@ -14,7 +14,7 @@ type Backend struct {
 
 // Route represents a routing rule
 type Route struct {
-	Pattern  string     // e.g., "*.easyflor.eu" or "api.easyflor.eu"
+	Pattern  string     // e.g., "*.haas.eu" or "api.haas.eu"
 	Backends []*Backend
 	next     uint64 // round-robin counter
 }

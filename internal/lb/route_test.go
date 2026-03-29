@@ -5,7 +5,7 @@ import "testing"
 func TestWildcardRouteMatch(t *testing.T) {
 	rt := NewRouteTable()
 	rt.Update(map[string]*Route{
-		"*.easyflor.eu": {Pattern: "*.easyflor.eu", Backends: []*Backend{{Address: "10.0.0.1:80", Healthy: true}}},
+		"*.haas.eu": {Pattern: "*.haas.eu", Backends: []*Backend{{Address: "10.0.0.1:80", Healthy: true}}},
 		"*.example.com": {Pattern: "*.example.com", Backends: []*Backend{{Address: "10.0.0.2:80", Healthy: true}}},
 	})
 
@@ -14,10 +14,10 @@ func TestWildcardRouteMatch(t *testing.T) {
 		want    string
 		wantNil bool
 	}{
-		{"app.easyflor.eu", "*.easyflor.eu", false},
-		{"api.easyflor.eu", "*.easyflor.eu", false},
-		{"easyflor.eu", "", true},                   // No subdomain = no match
-		{"sub.app.easyflor.eu", "", true},            // Multi-level = no match
+		{"app.haas.eu", "*.haas.eu", false},
+		{"api.haas.eu", "*.haas.eu", false},
+		{"haas.eu", "", true},                   // No subdomain = no match
+		{"sub.app.haas.eu", "", true},            // Multi-level = no match
 		{"test.example.com", "*.example.com", false},
 	}
 

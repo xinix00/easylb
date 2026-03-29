@@ -1,6 +1,6 @@
 # Performance Benchmarks
 
-Comprehensive performance tests for easylb's critical components.
+Comprehensive performance tests for hoplb's critical components.
 
 ## Running Benchmarks
 

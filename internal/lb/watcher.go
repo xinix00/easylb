@@ -11,22 +11,22 @@ import (
 	"strings"
 	"time"
 
-	"easylib"
+	"hoplib"
 )
 
-// Watcher watches local easyrun agent for task changes
+// Watcher watches local hop agent for task changes
 type Watcher struct {
 	agentAddr  string
 	routeTable *RouteTable
-	client     *easylib.Client
+	client     *hoplib.Client
 	interval   time.Duration
-	tagFilter  string // e.g., "lb:easyflor" means only jobs with tag lb=easyflor
+	tagFilter  string // e.g., "lb:haas" means only jobs with tag lb=haas
 
 	// Cached state for incremental updates
 	agentHosts map[string]string                        // agentID → hostname
-	jobs       map[string]*easylib.Job                  // jobName → job
+	jobs       map[string]*hoplib.Job                  // jobName → job
 	relevant   map[string]struct{}                      // job names that contribute routes
-	tasks      map[string]map[string][]*easylib.Task    // jobName → agentID → tasks
+	tasks      map[string]map[string][]*hoplib.Task    // jobName → agentID → tasks
 }
 
 // NewWatcher creates a new watcher
@@ -34,7 +34,7 @@ func NewWatcher(agentAddr string, routeTable *RouteTable, tagFilter string, apiK
 	return &Watcher{
 		agentAddr:  agentAddr,
 		routeTable: routeTable,
-		client:     easylib.NewClient(apiKey),
+		client:     hoplib.NewClient(apiKey),
 		interval:   5 * time.Second,
 		tagFilter:  tagFilter,
 	}
@@ -108,7 +108,7 @@ func (w *Watcher) watchSSE(ctx context.Context) error {
 				return nil // stream closed
 			}
 			if strings.HasPrefix(line, "data:") {
-				job := easylib.ParseJobFromSSE(line)
+				job := hoplib.ParseJobFromSSE(line)
 				if job == "" {
 					continue
 				}
@@ -144,13 +144,13 @@ func (w *Watcher) watchSSE(ctx context.Context) error {
 
 // sync does a full fetch of agents, jobs, and per-job task status for relevant jobs.
 func (w *Watcher) sync() {
-	agents, err := easylib.Fetch[[]easylib.Agent](w.client, w.agentAddr+"/v1/agents")
+	agents, err := hoplib.Fetch[[]hoplib.Agent](w.client, w.agentAddr+"/v1/agents")
 	if err != nil {
 		log.Printf("Failed to fetch agents: %v", err)
 		return
 	}
 
-	jobs, err := easylib.Fetch[[]easylib.Job](w.client, w.agentAddr+"/v1/jobs")
+	jobs, err := hoplib.Fetch[[]hoplib.Job](w.client, w.agentAddr+"/v1/jobs")
 	if err != nil {
 		log.Printf("Failed to fetch jobs: %v", err)
 		return
@@ -165,17 +165,17 @@ func (w *Watcher) sync() {
 	}
 
 	// Cache jobs + determine relevant
-	w.jobs = make(map[string]*easylib.Job)
+	w.jobs = make(map[string]*hoplib.Job)
 	w.relevant = make(map[string]struct{})
 	for i := range jobs {
 		w.jobs[jobs[i].Name] = &jobs[i]
-		if w.jobMatchesFilter(&jobs[i]) && jobs[i].Tags["easylb-urlprefix"] != "" {
+		if w.jobMatchesFilter(&jobs[i]) && jobs[i].Tags["hoplb-urlprefix"] != "" {
 			w.relevant[jobs[i].Name] = struct{}{}
 		}
 	}
 
 	// Fetch tasks only for relevant jobs
-	w.tasks = make(map[string]map[string][]*easylib.Task)
+	w.tasks = make(map[string]map[string][]*hoplib.Task)
 	for jobName := range w.relevant {
 		w.syncJob(jobName)
 	}
@@ -185,9 +185,9 @@ func (w *Watcher) sync() {
 
 // syncJob fetches only the tasks for a single job and rebuilds routes from cache.
 func (w *Watcher) syncJob(jobName string) {
-	status, err := easylib.Fetch[struct {
-		Agents       []easylib.Agent            `json:"agents"`
-		TasksByAgent map[string][]*easylib.Task  `json:"tasks_by_agent"`
+	status, err := hoplib.Fetch[struct {
+		Agents       []hoplib.Agent            `json:"agents"`
+		TasksByAgent map[string][]*hoplib.Task  `json:"tasks_by_agent"`
 	}](w.client, fmt.Sprintf("%s/v1/jobs/%s/status", w.agentAddr, jobName))
 	if err != nil {
 		log.Printf("Failed to fetch job status for %s: %v", jobName, err)
@@ -217,12 +217,12 @@ func (w *Watcher) buildRoutes() {
 			continue
 		}
 
-		pattern := job.Tags["easylb-urlprefix"]
+		pattern := job.Tags["hoplb-urlprefix"]
 		if pattern == "" {
 			continue
 		}
 
-		portName := job.Tags["easylb-port"]
+		portName := job.Tags["hoplb-port"]
 		for agentID, tasks := range w.tasks[jobName] {
 			host := w.agentHosts[agentID]
 			if host == "" {
@@ -262,8 +262,8 @@ func (w *Watcher) buildRoutes() {
 		if job == nil {
 			continue
 		}
-		pattern := job.Tags["easylb-urlprefix"]
-		portName := job.Tags["easylb-port"]
+		pattern := job.Tags["hoplb-urlprefix"]
+		portName := job.Tags["hoplb-port"]
 		tasksByAgent := w.tasks[jobName]
 		log.Printf("[debug] job=%s pattern=%q portName=%q agents=%d", jobName, pattern, portName, len(tasksByAgent))
 		for agentID, tasks := range tasksByAgent {
@@ -282,7 +282,7 @@ func (w *Watcher) buildRoutes() {
 }
 
 // taskPort returns the named port (from job's "port" tag) or first available.
-func taskPort(task *easylib.Task, portName string) int {
+func taskPort(task *hoplib.Task, portName string) int {
 	if portName != "" {
 		if p, ok := task.Ports[portName]; ok {
 			return p
@@ -313,7 +313,7 @@ func parseTagFilter(filter string) (string, string) {
 }
 
 // jobMatchesFilter checks if job has the required tag
-func (w *Watcher) jobMatchesFilter(job *easylib.Job) bool {
+func (w *Watcher) jobMatchesFilter(job *hoplib.Job) bool {
 	if w.tagFilter == "" {
 		return true // no filter = match all
 	}

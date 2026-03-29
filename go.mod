@@ -1,7 +1,7 @@
-module easylb
+module hoplb
 
 go 1.24.3
 
-require easylib v0.0.0
+require hoplib v0.0.0
 
-replace easylib => ../easylib
+replace hoplib => ../hoplib

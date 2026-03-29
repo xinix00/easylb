@@ -1,7 +1,7 @@
 package lb
 
 import (
-	"easylib"
+	"hoplib"
 	"fmt"
 	"io"
 	"log"
@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"easylb/internal/metrics"
+	"hoplb/internal/metrics"
 )
 
 func BenchmarkRouteMatch(b *testing.B) {
@@ -160,9 +160,9 @@ func BenchmarkBuildRoutes(b *testing.B) {
 	w := &Watcher{
 		routeTable: rt,
 		agentHosts: make(map[string]string),
-		jobs:       make(map[string]*easylib.Job),
+		jobs:       make(map[string]*hoplib.Job),
 		relevant:   make(map[string]struct{}),
-		tasks:      make(map[string]map[string][]*easylib.Task),
+		tasks:      make(map[string]map[string][]*hoplib.Task),
 	}
 
 	for i := 0; i < 10; i++ {
@@ -171,20 +171,20 @@ func BenchmarkBuildRoutes(b *testing.B) {
 
 	for i := 0; i < 100; i++ {
 		jobName := fmt.Sprintf("job-%d", i)
-		w.jobs[jobName] = &easylib.Job{
+		w.jobs[jobName] = &hoplib.Job{
 			ID:   fmt.Sprintf("jobid-%d", i),
 			Name: jobName,
 			Tags: map[string]string{
-				"easylb-urlprefix": fmt.Sprintf("*.job%d.example.com", i),
-				"easylb-port":     "http",
+				"hoplb-urlprefix": fmt.Sprintf("*.job%d.example.com", i),
+				"hoplb-port":     "http",
 			},
 		}
 		w.relevant[jobName] = struct{}{}
 
-		w.tasks[jobName] = make(map[string][]*easylib.Task)
+		w.tasks[jobName] = make(map[string][]*hoplib.Task)
 		for a := 0; a < 5; a++ {
 			agentID := fmt.Sprintf("agent-%d", a%10)
-			w.tasks[jobName][agentID] = append(w.tasks[jobName][agentID], &easylib.Task{
+			w.tasks[jobName][agentID] = append(w.tasks[jobName][agentID], &hoplib.Task{
 				ID:      fmt.Sprintf("task-%d-%d", i, a),
 				JobName: jobName,
 				State:   "running",
@@ -248,7 +248,7 @@ func BenchmarkParseJobFromData(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		job := easylib.ParseJobFromSSE(lines[i%len(lines)])
+		job := hoplib.ParseJobFromSSE(lines[i%len(lines)])
 		if job == "" {
 			b.Fatal("expected job name")
 		}
