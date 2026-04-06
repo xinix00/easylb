@@ -63,10 +63,8 @@ func (e *Exporter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "hoplb_request_duration_seconds_count{domain=%q,backend=%q} %d\n",
 				domain, backend, sampleCount)
 
-			// Calculate sum from p50 (approximate)
-			sum := values[0] * float64(sampleCount)
 			fmt.Fprintf(&b, "hoplb_request_duration_seconds_sum{domain=%q,backend=%q} %.6f\n",
-				domain, backend, sum)
+				domain, backend, e.metrics.LatencySum(domain, backend))
 		}
 	}
 

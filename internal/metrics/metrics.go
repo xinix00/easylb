@@ -16,6 +16,9 @@ type Metrics struct {
 	// Latency samples: domain -> backend -> []duration (for percentiles)
 	latencySamples map[string]map[string][]float64
 
+	// Latency sums: domain -> backend -> total seconds
+	latencySum map[string]map[string]float64
+
 	// Cached sorted snapshots: domain -> backend -> sorted []float64
 	// Invalidated on write, reused on read (O(1) percentile lookups between writes)
 	sortedCache map[string]map[string][]float64
@@ -29,6 +32,7 @@ func New() *Metrics {
 	return &Metrics{
 		requests:       make(map[string]map[string]map[int]int64),
 		latencySamples: make(map[string]map[string][]float64),
+		latencySum:     make(map[string]map[string]float64),
 		sortedCache:    make(map[string]map[string][]float64),
 		maxSamples:     10000, // Keep last 10k samples for percentiles
 	}
@@ -50,10 +54,14 @@ func (m *Metrics) RecordRequest(domain, backend string, statusCode int, duration
 	// Increment counter
 	m.requests[domain][backend][statusCode]++
 
-	// Record latency sample
+	// Record latency
 	if m.latencySamples[domain] == nil {
 		m.latencySamples[domain] = make(map[string][]float64)
 	}
+	if m.latencySum[domain] == nil {
+		m.latencySum[domain] = make(map[string]float64)
+	}
+	m.latencySum[domain][backend] += duration.Seconds()
 
 	samples := m.latencySamples[domain][backend]
 	samples = append(samples, duration.Seconds())
@@ -195,6 +203,16 @@ func (m *Metrics) AllBackends(domain string) []string {
 	}
 	sort.Strings(backends)
 	return backends
+}
+
+// LatencySum returns the total latency sum for a domain/backend
+func (m *Metrics) LatencySum(domain, backend string) float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if s, ok := m.latencySum[domain]; ok {
+		return s[backend]
+	}
+	return 0
 }
 
 // SampleCount returns the number of latency samples for a domain/backend
